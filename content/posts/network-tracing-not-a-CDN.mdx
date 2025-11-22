@@ -1,0 +1,79 @@
+---
+title: 網路線路排查案例：當你的 CDN 其實不是 CDN
+description: 本文分享一次 GCP 環境下的網路線路排查案例，從 nslookup、Global LoadBalancer 與 NEG 架構分析，發現所謂的 CDN domain 實際仍打到 Kubernetes nginx proxy，最終定位到 node 資源競爭問題並提出解法。
+date: 2025-5-20 08:00:00 +0800
+tags: [GCP, CDN, Troubleshooting, Kubernetes, Nginx, LoadBalancer, NEG, DevOps, 網路排查]
+---
+
+## TL;DR
+- 內部線路追查案例  
+- 問題根因：node 資源競爭導致 latency，client fallback 直接打到 server  
+
+## 背景
+公司內部 RD 為了降低後端負載，在前端掛了 **CDN**。  
+但近一週仍發現 **client 直接連 server** 的 log，問題來源有兩種可能：  
+1. **CDN 掛掉**  
+2. **client timeout (2s)**，直接 fallback 連 server  
+
+## 問題追查流程
+
+### 1. 確認網域解析
+先透過 `nslookup` 檢查服務 domain：  
+- domain 對應到 `34.x.x.x`，屬於 **GCP IP 範圍**。  
+- 確認 IP 所屬服務為 **Global LoadBalancer**，其後端 (backend) 使用了 **NEG (Network Endpoint Group)** 架構。  
+
+```mermaid
+flowchart LR
+GLB[Global LoadBalancer]
+NEG[NEG Backend Service]
+APPs[micro-service]
+GLB --> NEG --> APPs
+```
+
+進一步檢查才發現，所謂的 **cdn domain** 背後實際上：  
+- 請求仍打進 **Kubernetes cluster**。  
+- 經由 **nginx proxy** 再到指定資源倉庫。  
+
+### 2. 確認 nginx proxy 狀態
+比對 RD 提出的異常時間點：  
+- `5/14 14:10`  
+- `5/17 06:31`  
+- `5/19 08:38`  
+
+![nginx-proxy log](../assets/post/network-tracing/nginx-proxy%20log.png)  
+
+- 並不是所有時間點 log 都大量異常。  
+
+### 3. 觀察 metrics
+檢查 CPU 使用狀況：  
+
+![nginx-proxy metrics](../assets/post/network-tracing/nginx-proxy%20metrics.png)  
+
+- 服務本身並無中斷。  
+- 但在部分時間點確實有 latency spike。  
+
+### 4. 檢查 node 資源
+回頭檢查該服務所在 node：  
+
+![nginx-proxy node](../assets/post/network-tracing/nginx-proxy%20node.png)  
+
+- node 資源較為吃緊。  
+
+並檢查該服務資源配置：  
+
+![nginx-proxy resources](../assets/post/network-tracing/nginx-proxy%20resources.png)  
+
+- **CPU 有設 request，卻沒設 limit**。  
+
+👉 **推測 root cause**：  
+node 資源吃緊 → 服務競爭 → response latency → client timeout → fallback 直連 server。  
+
+---
+
+## 解決方案
+- 為 **nginx proxy** 補上資源 limit，避免與其他 pod 搶資源。  
+- 調整 node 資源配置，持續觀察是否改善。  
+
+---
+
+📌 **關鍵字**：GCP、CDN、Global LoadBalancer、NEG、Kubernetes、Nginx Proxy、Troubleshooting、資源競爭、Latency、DevOps 網路排查
