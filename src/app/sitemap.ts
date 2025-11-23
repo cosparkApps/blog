@@ -15,8 +15,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     return {
       url: `${BASE_URL}/posts/${post.slugs.join('/')}`,
       lastModified,
-      changeFrequency: 'monthly' as const,
-      priority: 0.7,
     };
   });
 
