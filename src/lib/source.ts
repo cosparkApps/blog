@@ -1,5 +1,6 @@
 import { docs } from '@/.source';
 import { loader } from 'fumadocs-core/source';
+import type { PageTreeTransformer } from 'fumadocs-core/source';
 
 // See https://fumadocs.vercel.app/docs/headless/source-api for more info
 export const source = loader({
@@ -19,7 +20,7 @@ export const source = loader({
             for (const item of items) {
               if (item.type === 'page') {
                 pages.push(item);
-              } else if (item.type === 'folder' && item.children) {
+              } else if (item.type === 'folder' && 'children' in item) {
                 pages.push(...collectPages(item.children));
               }
             }
@@ -31,16 +32,19 @@ export const source = loader({
           // 按日期降序排序（最新的在前）
           const sorted = allPages.sort((a, b) => {
             // 通過 $ref 獲取原始 file data
-            const fileA = a.$ref?.file ? storage.read(a.$ref.file) : null;
-            const fileB = b.$ref?.file ? storage.read(b.$ref.file) : null;
+            const refA = '$ref' in a ? (a.$ref as { file?: string } | undefined) : undefined;
+            const refB = '$ref' in b ? (b.$ref as { file?: string } | undefined) : undefined;
+
+            const fileA = refA?.file ? storage.read(refA.file) : null;
+            const fileB = refB?.file ? storage.read(refB.file) : null;
 
             const dateA =
               fileA && 'data' in fileA && fileA.data.date
-                ? new Date(fileA.data.date).getTime()
+                ? new Date(fileA.data.date as string).getTime()
                 : 0;
             const dateB =
               fileB && 'data' in fileB && fileB.data.date
-                ? new Date(fileB.data.date).getTime()
+                ? new Date(fileB.data.date as string).getTime()
                 : 0;
 
             return dateB - dateA;
@@ -53,10 +57,11 @@ export const source = loader({
             if (item.type !== 'page') continue;
 
             // 通過 $ref 獲取原始 file data
-            const file = item.$ref?.file ? storage.read(item.$ref.file) : null;
+            const ref = '$ref' in item ? (item.$ref as { file?: string } | undefined) : undefined;
+            const file = ref?.file ? storage.read(ref.file) : null;
             const year =
               file && 'data' in file && file.data.date
-                ? new Date(file.data.date).getFullYear().toString()
+                ? new Date(file.data.date as string).getFullYear().toString()
                 : 'Unknown';
 
             if (!grouped.has(year)) {
@@ -89,7 +94,7 @@ export const source = loader({
             children: newChildren,
           };
         },
-      },
+      } satisfies PageTreeTransformer,
     ],
   },
 });
